@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--restore')
     parser.add_argument('--save')
     parser.add_argument('--batch-feeder-start', type=int)
+    parser.add_argument('--summary-dir')
     args = parser.parse_args()
 
     # Read the input dataset, downloading it if necessary to `train_dir`.
@@ -43,8 +44,22 @@ def main():
     y_ = tf.placeholder(tf.float32, (None, L))
     cross_entropy = tf.reduce_mean(
         tf.nn.softmax_cross_entropy_with_logits(labels=y_, logits=y))
+    tf.summary.scalar('cross_entropy', cross_entropy)
+
+    correct_prediction = tf.equal(tf.argmax(y, axis=1),
+                                  tf.argmax(y_, axis=1))
+    accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
+    tf.summary.scalar('accuracy', accuracy)
+
     optimizer = tf.train.GradientDescentOptimizer(args.learning_rate)
     train_step = optimizer.minimize(cross_entropy)
+
+    merged_summary = tf.summary.merge_all()
+    if args.summary_dir:
+        print('summary_dir: {}'.format(args.summary_dir))
+        summary_writer = tf.summary.FileWriter(args.summary_dir)
+    else:
+        summary_writer = None
 
     # Define `next_batch`, a zero-argument callable that returns a nested tuple
     # of the form `(next_start, (batch_x, batch_y))`:
@@ -80,9 +95,12 @@ def main():
         # Run `num_batches` of gradient descent steps, updating
         # `next_start` as each batch is processed.
         next_start = None
-        for _ in range(args.num_batches):
+        for i in range(args.num_batches):
             next_start, (batch_x, batch_y) = next_batch()
-            sess.run(train_step, feed_dict={x: batch_x, y_: batch_y})
+            summary, _ = sess.run([merged_summary, train_step],
+                                  feed_dict={x: batch_x, y_: batch_y})
+            if summary_writer is not None:
+                summary_writer.add_summary(summary, i)
         if next_start is not None:
             print('next_start: {}'.format(next_start))
 
@@ -102,9 +120,6 @@ def main():
             saver.save(sess, args.save)
 
         # Evaluate the model on the complete test set of images and labels ...
-        correct_prediction = tf.equal(tf.argmax(y, 1), tf.argmax(y_, 1))
-        accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-
         evaluated_accuracy = sess.run(accuracy,
                                       feed_dict={x: mnist.test.images,
                                                  y_: mnist.test.labels})
